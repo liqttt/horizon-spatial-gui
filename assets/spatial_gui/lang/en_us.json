@@ -2,7 +2,7 @@
   "key.categories.spatial_gui": "Spatial GUI",
   "key.spatial_gui.toggle": "Toggle Spatial GUI",
   "spatial_gui.setting.enabled": "Enable Spatial GUI",
-  "spatial_gui.setting.enabled.tooltip": "Master switch to render inventory, creative, and container screens as a 3D plane in the world.",
+  "spatial_gui.setting.enabled.tooltip": "Master switch to render inventory, creative, and container screens as a 3D plane in the world (off by default; check server rules before enabling on multiplayer servers).",
   "spatial_gui.setting.view_mode": "Camera View Mode",
   "spatial_gui.setting.view_mode.tooltip": "Third Person swings the camera over your shoulder beside your player model. First Person keeps your normal view.",
   "spatial_gui.view_mode.third_person": "Third Person",

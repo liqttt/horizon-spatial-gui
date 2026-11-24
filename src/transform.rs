@@ -327,8 +327,18 @@ mod tests {
     #[test]
     fn world_transform_subdivides_adds_shadow_and_remaps_depth_runs() {
         let mut rt = SpatialRuntime::default();
+        rt.config.enabled = true;
         rt.record_camera_view(true, [0.0, 65.62, 0.0], 1.62, [0.0, 0.0]);
-        rt.compute_camera_pose(1.0, [0.0, 65.62, 0.0], 0.0, 0.0, CameraType::FirstPerson, 70.0);
+        rt.compute_camera_pose(
+            1.0,
+            [0.0, 65.62, 0.0],
+            0.0,
+            0.0,
+            CameraType::FirstPerson,
+            70.0,
+            true,
+            |_from, to| to,
+        );
         rt.step_hud(true, 480.0, 270.0, (240.0, 135.0));
         let plane = rt.current_plane.expect("plane");
 

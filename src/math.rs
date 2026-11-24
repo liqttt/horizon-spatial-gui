@@ -60,7 +60,7 @@ pub struct SpatialConfig {
 impl Default for SpatialConfig {
     fn default() -> Self {
         Self {
-            enabled: true,
+            enabled: false,
             view_mode: ViewMode::ThirdPerson,
             mirror_third_person: false,
             remove_backdrop: true,
@@ -309,6 +309,7 @@ pub struct SpatialRuntime {
 
     // Open animation & active world plane
     open_start: Option<Instant>,
+    use_first_person_plane: bool,
     pub current_plane: Option<WorldPlane>,
 }
 
@@ -346,6 +347,7 @@ impl Default for SpatialRuntime {
             parallax_pitch: 0.0,
             last_parallax: None,
             open_start: None,
+            use_first_person_plane: false,
             current_plane: None,
         }
     }
@@ -406,7 +408,11 @@ impl SpatialRuntime {
     }
 
     /// Computes camera pose override and target `CameraType` during `Hooks::camera_pose`.
-    pub fn compute_camera_pose(
+    ///
+    /// When `allow_position_override` is `false` (for example in multiplayer or when block collision
+    /// cannot be verified), the camera position is kept at the player's eye (`FirstPerson`) so the
+    /// camera never clips behind blocks after the host's collision check.
+    pub fn compute_camera_pose<F>(
         &mut self,
         partial: f32,
         vanilla_pos: [f64; 3],
@@ -414,7 +420,12 @@ impl SpatialRuntime {
         vanilla_pitch: f32,
         current_cam_type: CameraType,
         fov_deg: f32,
-    ) -> Option<([f64; 3], f32, f32, CameraType)> {
+        allow_position_override: bool,
+        clip_camera: F,
+    ) -> Option<([f64; 3], f32, f32, CameraType)>
+    where
+        F: FnOnce([f64; 3], [f64; 3]) -> [f64; 3],
+    {
         if self.has_tick_pose {
             let p = partial.clamp(0.0, 1.0);
             self.eye_pos = [
@@ -435,6 +446,8 @@ impl SpatialRuntime {
         }
         let now = Instant::now();
         let active_open = self.config.enabled && self.is_container_now;
+        let use_fp = self.config.view_mode == ViewMode::FirstPerson || !allow_position_override;
+        self.use_first_person_plane = use_fp;
 
         if active_open {
             if self.phase != Phase::Open {
@@ -467,7 +480,7 @@ impl SpatialRuntime {
             let norm_x = ((self.raw_cursor.0 / self.gui_size.0.max(1.0)) * 2.0 - 1.0).clamp(-1.0, 1.0);
             let norm_y = ((self.raw_cursor.1 / self.gui_size.1.max(1.0)) * 2.0 - 1.0).clamp(-1.0, 1.0);
 
-            if self.config.view_mode == ViewMode::FirstPerson {
+            if use_fp {
                 let target_py = norm_x * 90.0 * 0.08;
                 let target_pp = norm_y * 180.0 * 0.04;
                 self.parallax_yaw += (target_py - self.parallax_yaw) * p_alpha;
@@ -475,8 +488,8 @@ impl SpatialRuntime {
 
                 let yaw = self.anchored_yaw + self.parallax_yaw;
                 let pitch = (self.anchored_pitch + self.parallax_pitch).clamp(-89.0, 89.0);
-                let pos = self.eye_pos;
-                self.cam_target_pos = pos;
+                let pos = vanilla_pos;
+                self.cam_target_pos = self.eye_pos;
                 self.last_cam_pos = pos;
                 self.last_cam_offset = [0.0, 0.0, 0.0];
                 self.last_cam_yaw = yaw;
@@ -520,11 +533,12 @@ impl SpatialRuntime {
                 .unwrap_or(1.0);
             let eased = ease_out_cubic(t);
 
-            let cam_pos = [
+            let unclipped_pos = [
                 lerp_f64(self.start_cam_pos[0], target_pos[0], eased),
                 lerp_f64(self.start_cam_pos[1], target_pos[1], eased),
                 lerp_f64(self.start_cam_pos[2], target_pos[2], eased),
             ];
+            let cam_pos = clip_camera(self.eye_pos, unclipped_pos);
             let cam_yaw = rot_lerp(self.start_cam_yaw, target_yaw, eased);
             let cam_pitch = lerp_f32(self.start_cam_pitch, target_pitch, eased);
 
@@ -549,7 +563,7 @@ impl SpatialRuntime {
         }
 
         if self.phase == Phase::Closing {
-            if self.config.view_mode == ViewMode::FirstPerson {
+            if use_fp {
                 let restore = self.saved_camera_type.take().unwrap_or(CameraType::FirstPerson);
                 self.phase = Phase::Idle;
                 return Some((vanilla_pos, vanilla_yaw, vanilla_pitch, restore));
@@ -588,11 +602,12 @@ impl SpatialRuntime {
                 vanilla_pitch
             };
 
-            let pos = [
+            let unclipped_pos = [
                 lerp_f64(from_pos[0], target_pos[0], eased),
                 lerp_f64(from_pos[1], target_pos[1], eased),
                 lerp_f64(from_pos[2], target_pos[2], eased),
             ];
+            let pos = clip_camera(self.eye_pos, unclipped_pos);
             let yaw = rot_lerp(self.last_cam_yaw, target_yaw, eased);
             let pitch = lerp_f32(self.last_cam_pitch, target_pitch, eased);
 
@@ -651,7 +666,7 @@ impl SpatialRuntime {
 
         let (cam_q, cam_right, cam_up, cam_back) = view_basis(self.last_cam_yaw, self.last_cam_pitch);
 
-        let is_fp = self.config.view_mode == ViewMode::FirstPerson;
+        let is_fp = self.config.view_mode == ViewMode::FirstPerson || self.use_first_person_plane;
         let base_yaw = self.anchored_yaw;
         let yaw_rad = base_yaw.to_radians();
         let (sy, cy) = yaw_rad.sin_cos();
@@ -745,6 +760,11 @@ mod tests {
     use super::*;
 
     #[test]
+    fn default_config_is_disabled() {
+        assert!(!SpatialConfig::default().enabled);
+    }
+
+    #[test]
     fn view_basis_matches_horizon_conventions() {
         let (_, right, up, back) = view_basis(0.0, 0.0);
         // Facing South (+Z): camera -Z = (0,0,+1) => back = (0,0,-1); right = West (-1,0,0)
@@ -756,11 +776,21 @@ mod tests {
     #[test]
     fn first_person_plane_faces_camera_when_looking_down() {
         let mut rt = SpatialRuntime::default();
+        rt.config.enabled = true;
         rt.config.view_mode = ViewMode::FirstPerson;
         rt.config.fp_screen_yaw_offset = 180.0;
         rt.raw_cursor = (240.0, 135.0);
         rt.record_camera_view(true, [0.0, 65.62, 0.0], 1.62, [25.0, 35.0]);
-        rt.compute_camera_pose(1.0, [0.0, 65.62, 0.0], 25.0, 35.0, CameraType::FirstPerson, 70.0);
+        rt.compute_camera_pose(
+            1.0,
+            [0.0, 65.62, 0.0],
+            25.0,
+            35.0,
+            CameraType::FirstPerson,
+            70.0,
+            true,
+            |_from, to| to,
+        );
         rt.step_hud(true, 480.0, 270.0, (240.0, 135.0));
         let plane = rt.current_plane.expect("plane");
         // Camera forward is `-cam_back`; plane `up` and `right` must be orthogonal to it.
@@ -770,13 +800,46 @@ mod tests {
     }
 
     #[test]
+    fn multiplayer_keeps_camera_position_override_off() {
+        let mut rt = SpatialRuntime::default();
+        rt.config.enabled = true;
+        rt.config.view_mode = ViewMode::ThirdPerson;
+        let vanilla_pos = [10.0, 65.62, -20.0];
+        rt.record_camera_view(true, vanilla_pos, 1.62, [0.0, 5.0]);
+        let (pos, _, _, cam_type) = rt
+            .compute_camera_pose(
+                1.0,
+                vanilla_pos,
+                0.0,
+                5.0,
+                CameraType::FirstPerson,
+                70.0,
+                false,
+                |_from, to| to,
+            )
+            .expect("override");
+        assert_eq!(pos, vanilla_pos);
+        assert_eq!(cam_type, CameraType::FirstPerson);
+    }
+
+    #[test]
     fn world_plane_orientation_and_roundtrip_across_player_yaws() {
         for yaw in [0.0_f32, 45.0, 135.0, -90.0] {
             let mut rt = SpatialRuntime::default();
+            rt.config.enabled = true;
             rt.record_camera_view(true, [10.0, 65.62, -20.0], 1.62, [yaw, 5.0]);
             rt.raw_cursor = (300.0, 150.0);
             let (_, _, _, cam_type) = rt
-                .compute_camera_pose(1.0, [10.0, 65.62, -20.0], yaw, 5.0, CameraType::FirstPerson, 70.0)
+                .compute_camera_pose(
+                    1.0,
+                    [10.0, 65.62, -20.0],
+                    yaw,
+                    5.0,
+                    CameraType::FirstPerson,
+                    70.0,
+                    true,
+                    |_from, to| to,
+                )
                 .expect("override");
             assert_eq!(cam_type, CameraType::ThirdPersonBack);
 

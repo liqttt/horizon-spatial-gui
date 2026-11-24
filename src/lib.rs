@@ -11,15 +11,50 @@ pub mod transform;
 
 use math::{SpatialConfig, ViewMode, runtime};
 use mod_api::{
-    self, CameraPoseEvent, ClientHost, ClientTickPostEvent, Flow, Hooks, KeyConflictContext,
-    KeyRegistration, MenuBackgroundEvent, Registrar, RegistrationContext, ScreenClosingEvent,
-    ScreenOpening, ScreenOpeningEvent, ScreenTransparentBackgroundEvent, SettingChangedEvent,
-    SettingSpec,
+    self, CameraPoseEvent, ClientHost, ClientTickPostEvent, ClipBlock, ClipFluid, Flow, Hooks,
+    KeyConflictContext, KeyRegistration, MenuBackgroundEvent, Registrar, RegistrationContext,
+    ScreenClosingEvent, ScreenOpening, ScreenOpeningEvent, ScreenTransparentBackgroundEvent,
+    SettingChangedEvent, SettingSpec,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const MOD_ID: &str = "spatial_gui";
 static SETTINGS_SYNCED: AtomicBool = AtomicBool::new(false);
+
+fn clip_camera_position(
+    host: &dyn ClientHost,
+    level: Option<mod_api::LevelRef>,
+    from: [f64; 3],
+    to: [f64; 3],
+) -> [f64; 3] {
+    let Some(level) = level else {
+        return from;
+    };
+    let dx = to[0] - from[0];
+    let dy = to[1] - from[1];
+    let dz = to[2] - from[2];
+    let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+    if dist <= 1e-4 {
+        return to;
+    }
+    let Some(hit) = level.clip(host, from, to, ClipBlock::Collider, ClipFluid::None) else {
+        return from;
+    };
+    if hit.miss {
+        return to;
+    }
+    let hx = hit.location[0] - from[0];
+    let hy = hit.location[1] - from[1];
+    let hz = hit.location[2] - from[2];
+    let hit_dist = (hx * hx + hy * hy + hz * hz).sqrt();
+    let safe_dist = (hit_dist - 0.12).max(0.0);
+    let scale = safe_dist / dist;
+    [
+        from[0] + dx * scale,
+        from[1] + dy * scale,
+        from[2] + dz * scale,
+    ]
+}
 
 #[derive(Default)]
 struct SpatialGuiMod;
@@ -85,7 +120,7 @@ fn sync_all_settings(host: &dyn ClientHost, cfg: &mut SpatialConfig) {
 impl Hooks for SpatialGuiMod {
     fn register(&self, registrar: &mut dyn Registrar, _cx: &RegistrationContext) {
         let _ = registrar.register_setting(
-            SettingSpec::toggle("enabled", "spatial_gui.setting.enabled", true)
+            SettingSpec::toggle("enabled", "spatial_gui.setting.enabled", false)
                 .tooltip("spatial_gui.setting.enabled.tooltip"),
         );
         let _ = registrar.register_setting(
@@ -314,6 +349,11 @@ impl Hooks for SpatialGuiMod {
     fn camera_pose(&self, host: &dyn ClientHost, event: &mut CameraPoseEvent<'_>) {
         let fov = host.camera().map(|c| c.fov_degrees).unwrap_or(70.0);
         let cur_type = host.camera_type();
+        let is_singleplayer = host
+            .client_session()
+            .client_server()
+            .is_some_and(|s| s.integrated_local && s.address.is_none());
+        let level = host.local_player().and_then(|p| p.level(host));
         let override_res = match runtime().lock() {
             Ok(mut rt) => rt.compute_camera_pose(
                 event.partial,
@@ -322,6 +362,8 @@ impl Hooks for SpatialGuiMod {
                 event.pitch,
                 cur_type,
                 fov,
+                is_singleplayer,
+                |from, to| clip_camera_position(host, level, from, to),
             ),
             Err(_) => return,
         };

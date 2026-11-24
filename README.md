@@ -42,13 +42,15 @@ Keeps your normal first-person perspective and hand visible while projecting the
 - **Adaptive Quad Subdivision:** Subdivides large UI panels to prevent affine texture warping under perspective projection, while keeping 3D item/player previews (`Blend::Depth`) and flat overlays (F3 debug screen, advancement/recipe toasts) untouched.
 - **In-Game Configuration & Keybind:** Full English settings with descriptive tooltips in **Options → Mods → Spatial GUI → Config**, plus a toggle keybind (**`F8`** by default in **Options → Controls**).
 
+> **Multiplayer Warning:** Spatial GUI is **disabled by default** (`Enable Spatial GUI = false`) because it remaps inventory cursor input onto the 3D world plane. Some multiplayer servers or anti-cheat plugins may disallow or flag modified inventory cursor input. Always check a server's rules before enabling this mod in multiplayer. In addition, the third-person camera position override is kept off in multiplayer (and block-collision clipped in singleplayer).
+
 ---
 
 ## Configuration (`Options → Mods → Spatial GUI → Config`)
 
 | Setting | Default | Description |
 | --- | --- | --- |
-| **Enable Spatial GUI** | `true` | Master toggle for 3D world-space GUI rendering. |
+| **Enable Spatial GUI** | `false` | Master toggle for 3D world-space GUI rendering (press `F8` in-game or toggle in mod settings). |
 | **Camera View Mode** | `Third Person` | Switch between `Third Person` (over-the-shoulder) and `First Person`. |
 | **Mirror Third Person Side** | `false` | Flips the third-person camera and floating GUI to the opposite side. |
 | **Clear World Backdrop & Blur** | `true` | Removes dark tint and background blur behind the 3D GUI. |
