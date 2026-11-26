@@ -1,4 +1,4 @@
-<p align="center">
+e<p align="center">
   <img src="icon.png" alt="Spatial GUI Icon" width="128" />
 </p>
 
